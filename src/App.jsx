@@ -20,6 +20,12 @@ const BUSINESS_TYPES = [
   { value: 'solar', label: 'Solar Installer', emoji: '☀️', avgJob: 20000 },
   { value: 'window_door', label: 'Window & Door Installer', emoji: '🪟', avgJob: 10000 },
   { value: 'painter', label: 'Painter', emoji: '🎨', avgJob: 5000 },
+  { value: 'general_contractor', label: 'General Contractor / Home Renovation', emoji: '🏗️', avgJob: 25000 },
+  { value: 'kitchen_remodel', label: 'Kitchen Remodeling', emoji: '🍳', avgJob: 35000 },
+  { value: 'bathroom_remodel', label: 'Bathroom Remodeling', emoji: '🛁', avgJob: 15000 },
+  { value: 'flooring', label: 'Flooring Installation', emoji: '🪵', avgJob: 8000 },
+  { value: 'drywall', label: 'Drywall & Interior Finishing', emoji: '🧱', avgJob: 5000 },
+  { value: 'tile', label: 'Tile & Stone', emoji: '🪨', avgJob: 6000 },
 ];
 
 const INDUSTRY_MESSAGES = {
@@ -113,6 +119,36 @@ const INDUSTRY_MESSAGES = {
     stat: '74% of customers only trust reviews from the last 3 months — and painters with recent reviews win the quote comparison.',
     win: '5 STAR COLLECTOR customers consistently outbook local competitors with a steady stream of fresh, verified reviews.',
   },
+  general_contractor: {
+    problem: 'Homeowners hiring a general contractor are making one of the biggest financial decisions of their lives. They research hard and read every review. Old or sparse reviews send them to your competitor.',
+    stat: '93% of consumers have made a purchase after reading reviews — and renovation contracts are no exception.',
+    win: '5 STAR COLLECTOR customers build the review profile that wins high-ticket renovation contracts consistently.',
+  },
+  kitchen_remodel: {
+    problem: 'A kitchen remodel is a $35,000+ decision. Homeowners spend months researching before calling anyone. If your reviews are stale or sparse, they hire someone with a proven track record instead.',
+    stat: '74% of consumers only trust reviews from the last 3 months — and kitchen remodel buyers research longer than almost anyone.',
+    win: '5 STAR COLLECTOR customers build the social proof that converts high-intent remodel prospects into signed contracts.',
+  },
+  bathroom_remodel: {
+    problem: 'Homeowners searching for a bathroom remodeler compare multiple contractors before calling. Whoever has the most recent, consistent reviews gets the first call — and usually the job.',
+    stat: '47% of customers will not use a business with fewer than 20 reviews.',
+    win: '5 STAR COLLECTOR customers stay visible and trusted so homeowners reach out to them first.',
+  },
+  flooring: {
+    problem: 'Flooring installation is competitive and price-sensitive. When quotes are similar, homeowners choose whoever looks most trustworthy online. Recent reviews are the tiebreaker.',
+    stat: '74% of customers only trust reviews from the last 3 months.',
+    win: '5 STAR COLLECTOR customers win more jobs by consistently looking more credible than local competitors.',
+  },
+  drywall: {
+    problem: 'Drywall and finishing work is often searched as part of a larger renovation. Contractors with fresh reviews show up when homeowners are actively spending. Stale reviews mean missed timing.',
+    stat: '45% of consumers now use ChatGPT for local business recommendations.',
+    win: '5 STAR COLLECTOR customers stay visible during active renovation seasons with a steady review pipeline.',
+  },
+  tile: {
+    problem: 'Tile and stone work is visual and high-stakes. Homeowners want proof of quality before hiring. Recent reviews with photos are the fastest way to show what you can do.',
+    stat: '36% of consumers say an appealing photo accompanying a review increases their trust.',
+    win: '5 STAR COLLECTOR customers build the review volume and recency that wins tile and stone projects consistently.',
+  },
 };
 
 export default function FiveStarCalculator() {
@@ -163,7 +199,7 @@ If you cannot find the business return: { "found": false }`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 500,
@@ -223,7 +259,7 @@ Return ONLY this JSON:
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
@@ -236,10 +272,58 @@ Return ONLY this JSON:
       const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('Could not parse response');
       const analysisData = JSON.parse(jsonMatch[0]);
+
+      // GROUNDED FORMULA — Based on BrightLocal 2026 Local Consumer Review Survey
+      const userReviews = confirmData.reviews || 0;
+      const topCompetitorReviews = Math.max(...analysisData.competitors.map(c => c.reviews), userReviews);
+      const recentDays = analysisData.business.mostRecentDays || 0;
+
+      // Step 1: Review Gap Penalty
+      let reviewGapPenalty = 0;
+      if (userReviews < 20) {
+        reviewGapPenalty = 0.47; // 47% won't use businesses with fewer than 20 reviews
+      } else {
+        const gapPercent = (topCompetitorReviews - userReviews) / topCompetitorReviews;
+        if (gapPercent >= 0.5) reviewGapPenalty = 0.40;
+        else if (gapPercent >= 0.25) reviewGapPenalty = 0.25;
+        else if (gapPercent > 0) reviewGapPenalty = 0.10;
+      }
+
+      // Step 2: Recency Penalty (74% only trust reviews from last 3 months)
+      let recencyPenalty = 0;
+      if (recentDays >= 90) recencyPenalty = 0.35;
+      else if (recentDays >= 30) recencyPenalty = 0.20;
+      else if (recentDays >= 14) recencyPenalty = 0.05;
+
+      // Combined visibility loss (capped at 75% to keep realistic)
+      const combinedPenalty = Math.min(0.75, reviewGapPenalty + recencyPenalty);
+
+      // Industry average monthly inbound leads — based on vertical
+      const monthlyLeadEstimates = {
+        plumbing: 35, roofing: 15, gutters: 20, hvac: 25, electrical: 25,
+        landscaping: 20, pest_control: 30, pressure_washing: 15, window_cleaning: 15,
+        solar: 12, painter: 18, kitchen_remodel: 10, bathroom_remodel: 12,
+        general_contractor: 8, flooring: 15, drywall: 20, tile: 15,
+        real_estate: 8, mortgage: 10, property_mgmt: 12,
+        adu_designer: 8, adu_permit: 10,
+      };
+      const baseLeads = monthlyLeadEstimates[businessType] || 20;
+      const lostLeadsLow = Math.round(baseLeads * combinedPenalty * 0.7);
+      const lostLeadsHigh = Math.round(baseLeads * combinedPenalty * 1.0);
+      const avgLostLeads = Math.round((lostLeadsLow + lostLeadsHigh) / 2);
+
       setResults({
         ...analysisData,
         jobValue: parseFloat(jobValue),
-        monthlyLoss: analysisData.analysis.estimatedLostJobs * parseFloat(jobValue),
+        monthlyLoss: avgLostLeads * parseFloat(jobValue),
+        monthlyLossLow: lostLeadsLow * parseFloat(jobValue),
+        monthlyLossHigh: lostLeadsHigh * parseFloat(jobValue),
+        lostLeadsLow,
+        lostLeadsHigh,
+        visibilityLoss: Math.round(combinedPenalty * 100),
+        reviewGapPenalty: Math.round(reviewGapPenalty * 100),
+        recencyPenalty: Math.round(recencyPenalty * 100),
+        baseLeads,
         businessType,
         messages: INDUSTRY_MESSAGES[businessType],
         searchPhrase: searchPhrase || null,
@@ -424,15 +508,46 @@ Return ONLY this JSON:
               </div>
             </div>
             <div className="bg-black rounded-xl p-6">
-              <div className="flex items-center gap-2 mb-4"><TrendingUp className="text-white" size={20} /><h3 className="font-bold text-white text-lg">What This Costs You</h3></div>
+              <div className="flex items-center gap-2 mb-2"><TrendingUp className="text-white" size={20} /><h3 className="font-bold text-white text-lg">What This Costs You</h3></div>
+              <p className="text-gray-500 text-xs mb-4">Calculated using BrightLocal 2026 Local Consumer Review Survey data</p>
+
+              <div className="bg-gray-900 rounded-lg p-4 mb-4">
+                <div className="text-xs text-gray-500 uppercase tracking-widest font-semibold mb-3">Your Visibility Loss</div>
+                <div className="space-y-2 mb-3">
+                  {results.reviewGapPenalty > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Review gap penalty</span>
+                      <span className="text-red-400 font-semibold">-{results.reviewGapPenalty}%</span>
+                    </div>
+                  )}
+                  {results.recencyPenalty > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Review recency penalty</span>
+                      <span className="text-red-400 font-semibold">-{results.recencyPenalty}%</span>
+                    </div>
+                  )}
+                </div>
+                <div className="border-t border-gray-800 pt-2 flex justify-between items-center">
+                  <span className="text-white text-sm font-semibold">Total visibility loss</span>
+                  <span className="text-red-400 font-bold text-xl">-{results.visibilityLoss}%</span>
+                </div>
+              </div>
+
               <div className="space-y-3">
-                <div className="flex justify-between"><span className="text-gray-400 text-sm">Estimated lost {['real_estate','mortgage','property_mgmt','adu_designer','adu_permit','solar'].includes(results.businessType) ? 'clients' : 'jobs'}/month</span><span className="font-bold text-white">{results.analysis.estimatedLostJobs}–{Math.round(results.analysis.estimatedLostJobs * 1.5)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400 text-sm">Industry avg leads/month</span><span className="font-bold text-white">{results.baseLeads}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400 text-sm">Estimated lost {['real_estate','mortgage','property_mgmt','adu_designer','adu_permit','solar'].includes(results.businessType) ? 'clients' : 'jobs'}/month</span><span className="font-bold text-white">{results.lostLeadsLow}–{results.lostLeadsHigh}</span></div>
                 <div className="flex justify-between"><span className="text-gray-400 text-sm">Your average job value</span><span className="font-bold text-white">${results.jobValue.toLocaleString()}</span></div>
                 <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
                   <span className="text-gray-200 font-semibold">Monthly revenue loss</span>
-                  <span className="font-bold text-2xl text-white">${Math.round(results.monthlyLoss).toLocaleString()}</span>
+                  <span className="font-bold text-2xl text-white">${Math.round(results.monthlyLossLow).toLocaleString()}–${Math.round(results.monthlyLossHigh).toLocaleString()}</span>
                 </div>
-                <div className="text-right"><span className="text-gray-500 text-xs">That's ${Math.round(results.monthlyLoss * 12).toLocaleString()}/year</span></div>
+                <div className="text-right"><span className="text-gray-500 text-xs">That's up to ${Math.round(results.monthlyLossHigh * 12).toLocaleString()}/year</span></div>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-gray-800">
+                <p className="text-gray-500 text-xs leading-relaxed">
+                  Sources: BrightLocal 2026 (47% won't use businesses with under 20 reviews, 74% only trust reviews from last 3 months, 97% read reviews before choosing).
+                </p>
               </div>
             </div>
           </div>
@@ -536,6 +651,8 @@ Return ONLY this JSON:
               />
               <p className="text-xs text-gray-500 mt-1">We'll show who's beating you for that search</p>
             </div>
+            <div>
+              <label className="block text-sm font-semibold text-black mb-2">Average Job Value</label>
               <div className="relative">
                 <span className="absolute left-4 top-3 text-gray-500">$</span>
                 <input type="number" placeholder="e.g., 650" value={jobValue} onChange={(e) => setJobValue(e.target.value)} className="w-full px-4 py-3 pl-8 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-black bg-white text-black placeholder-gray-400" />

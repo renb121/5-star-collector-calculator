@@ -42,7 +42,28 @@ export default async function handler(req, res) {
     return mostRecent ? Math.floor((Date.now() - mostRecent.getTime()) / (1000 * 60 * 60 * 24)) : null;
   }
 
-  // Always fetch competitors regardless of whether we find the user's business
+  // Verify the match is actually a good match — not just any business with similar words
+  function isGoodMatch(place, searchName) {
+    if (!place.displayName?.text) return false;
+    const placeName = place.displayName.text.toLowerCase();
+    const search = searchName.toLowerCase()
+      .replace(/\b(llc|inc|corp|co|company|ltd)\b\.?/gi, '')
+      .replace(/[,.\s]+$/, '')
+      .trim();
+
+    // Get the most distinctive word from the search (longest non-generic word)
+    const genericWords = ['the', 'and', 'company', 'service', 'services', 'group', 'cleaning', 'wash', 'washing', 'plumbing', 'roofing', 'hvac', 'electric', 'electrical', 'pressure', 'landscape', 'landscaping', 'real', 'estate', 'home', 'house', 'kitchen', 'bath', 'bathroom', 'building', 'builders', 'remodel', 'remodeling', 'construction'];
+    const searchWords = search.split(/\s+/).filter(w => w.length > 2 && !genericWords.includes(w));
+    
+    // If no distinctive words, require the FULL business name to be in the result
+    if (searchWords.length === 0) {
+      return placeName.includes(search);
+    }
+
+    // Otherwise, require at least one distinctive word to appear in the place name
+    return searchWords.some(word => placeName.includes(word));
+  }
+
   const businessTypeQueries = {
     plumbing: 'plumber',
     roofing: 'roofing contractor',
@@ -92,9 +113,6 @@ export default async function handler(req, res) {
     const searchAttempts = [
       `${businessName} ${city}`,
       `${cleanName} ${city}`,
-      `${cleanName}, ${city}`,
-      businessName,
-      cleanName,
       `"${cleanName}" ${city}`,
     ];
 
@@ -103,18 +121,16 @@ export default async function handler(req, res) {
 
     for (const query of searchAttempts) {
       const results = await searchPlaces(query, 1);
-      if (results && results.length > 0) {
+      if (results && results.length > 0 && isGoodMatch(results[0], businessName)) {
         business = results[0];
         attemptUsed = query;
         break;
       }
     }
 
-    // Always get competitors
     const competitors = await getCompetitors(business?.id);
 
     if (!business) {
-      // Return found: false but still include competitors so frontend can show manual entry
       return res.status(200).json({ 
         found: false,
         message: 'Business not found in Google database',
@@ -122,16 +138,7 @@ export default async function handler(req, res) {
       });
     }
 
-    let mostRecentDays = null;
-    if (business.reviews && business.reviews.length > 0) {
-      const mostRecent = business.reviews.reduce((latest, review) => {
-        const reviewDate = new Date(review.publishTime);
-        return !latest || reviewDate > latest ? reviewDate : latest;
-      }, null);
-      if (mostRecent) {
-        mostRecentDays = Math.floor((Date.now() - mostRecent.getTime()) / (1000 * 60 * 60 * 24));
-      }
-    }
+    let mostRecentDays = getDaysSinceLastReview(business);
 
     return res.status(200).json({
       found: true,

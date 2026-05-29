@@ -14,10 +14,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Business name and city are required' });
   }
 
-  try {
-    // Step 1: Find the user's business
-    const businessQuery = `${businessName} ${city}`;
-    const businessResponse = await fetch('https://places.googleapis.com/v1/places:searchText', {
+  async function searchPlaces(query, maxResults = 1) {
+    const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -25,31 +23,51 @@ export default async function handler(req, res) {
         'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.reviews'
       },
       body: JSON.stringify({
-        textQuery: businessQuery,
-        maxResultCount: 1
+        textQuery: query,
+        maxResultCount: maxResults
       })
     });
 
-    if (!businessResponse.ok) {
-      const errorText = await businessResponse.text();
-      return res.status(businessResponse.status).json({ 
-        error: 'Google Places API error',
-        details: errorText
-      });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.places && data.places.length > 0 ? data.places : null;
+  }
+
+  try {
+    const cleanName = businessName
+      .replace(/\b(LLC|Inc|Corp|Co|Company|Ltd)\b\.?/gi, '')
+      .replace(/[,.\s]+$/, '')
+      .trim();
+
+    const searchAttempts = [
+      `${businessName} ${city}`,
+      `${cleanName} ${city}`,
+      `${cleanName}, ${city}`,
+      businessName,
+      cleanName,
+      `"${cleanName}" ${city}`,
+    ];
+
+    let business = null;
+    let attemptUsed = '';
+
+    for (const query of searchAttempts) {
+      const results = await searchPlaces(query, 1);
+      if (results && results.length > 0) {
+        business = results[0];
+        attemptUsed = query;
+        break;
+      }
     }
 
-    const businessData = await businessResponse.json();
-
-    if (!businessData.places || businessData.places.length === 0) {
+    if (!business) {
       return res.status(404).json({ 
+        found: false,
         error: 'Business not found',
         message: 'We could not find that business on Google. Try a more specific name or include the full address.'
       });
     }
 
-    const business = businessData.places[0];
-
-    // Calculate days since most recent review
     let mostRecentDays = null;
     if (business.reviews && business.reviews.length > 0) {
       const mostRecent = business.reviews.reduce((latest, review) => {
@@ -61,7 +79,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Step 2: Find competitors based on business type
     const businessTypeQueries = {
       plumbing: 'plumber',
       roofing: 'roofing contractor',
@@ -88,32 +105,18 @@ export default async function handler(req, res) {
     };
 
     const competitorQuery = `${businessTypeQueries[businessType] || businessType} ${city}`;
-    const competitorsResponse = await fetch('https://places.googleapis.com/v1/places:searchText', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': apiKey,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount'
-      },
-      body: JSON.stringify({
-        textQuery: competitorQuery,
-        maxResultCount: 5
-      })
-    });
-
+    const competitorResults = await searchPlaces(competitorQuery, 5);
+    
     let competitors = [];
-    if (competitorsResponse.ok) {
-      const competitorsData = await competitorsResponse.json();
-      if (competitorsData.places) {
-        competitors = competitorsData.places
-          .filter(p => p.id !== business.id) // exclude the user's business
-          .slice(0, 3)
-          .map(p => ({
-            name: p.displayName?.text || 'Unknown',
-            reviews: p.userRatingCount || 0,
-            rating: p.rating || 0
-          }));
-      }
+    if (competitorResults) {
+      competitors = competitorResults
+        .filter(p => p.id !== business.id)
+        .slice(0, 3)
+        .map(p => ({
+          name: p.displayName?.text || 'Unknown',
+          reviews: p.userRatingCount || 0,
+          rating: p.rating || 0
+        }));
     }
 
     return res.status(200).json({
@@ -126,7 +129,8 @@ export default async function handler(req, res) {
         rating: business.rating || 0,
         mostRecentDays: mostRecentDays !== null ? mostRecentDays : 999
       },
-      competitors
+      competitors,
+      searchUsed: attemptUsed
     });
   } catch (error) {
     return res.status(500).json({ 

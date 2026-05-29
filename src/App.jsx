@@ -201,8 +201,9 @@ If you cannot find the business return: { "found": false }`;
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json', 
-          'Authorization': `Bearer ${import.meta.env.VITE_ANTHROPIC_API_KEY}`,
-          'anthropic-version': '2023-06-01'
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-unsafe-direct-browser-access': 'true'
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
@@ -265,8 +266,9 @@ Return ONLY this JSON:
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json', 
-          'Authorization': `Bearer ${import.meta.env.VITE_ANTHROPIC_API_KEY}`,
-          'anthropic-version': '2023-06-01'
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-unsafe-direct-browser-access': 'true'
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',

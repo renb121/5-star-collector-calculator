@@ -165,6 +165,10 @@ export default function FiveStarCalculator() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
+  const [manualReviews, setManualReviews] = useState('');
+  const [manualRating, setManualRating] = useState('');
+  const [manualDaysSinceReview, setManualDaysSinceReview] = useState('');
 
   const handleBusinessTypeChange = (value) => {
     setBusinessType(value);
@@ -188,12 +192,18 @@ export default function FiveStarCalculator() {
 
       const data = await response.json();
 
-      if (!response.ok || !data.found) {
-        setError(data.message || "We couldn't find that business. Try adding your city and state (e.g. Newark, CA).");
+      // Always store competitors (we get them even when business not found)
+      if (data.competitors) {
+        setConfirmData({ competitors: data.competitors });
+      }
+
+      if (!data.found) {
+        // Switch to manual entry mode instead of showing error
+        setManualMode(true);
         return;
       }
 
-      // Store both business and competitors for the analysis step
+      // Business was found - store everything and go to confirm
       setConfirmData({ ...data.business, competitors: data.competitors });
       setConfirming(true);
     } catch (err) {
@@ -287,6 +297,77 @@ export default function FiveStarCalculator() {
     }
   };
 
+  const analyzeManual = (hasGBP) => {
+    setError('');
+    const userReviews = hasGBP ? (parseInt(manualReviews) || 0) : 0;
+    const userRating = hasGBP ? (parseFloat(manualRating) || 0) : 0;
+    const recentDays = hasGBP ? (parseInt(manualDaysSinceReview) || 999) : 999;
+    const competitors = confirmData?.competitors || [];
+    const topCompetitorReviews = competitors.length > 0 
+      ? Math.max(...competitors.map(c => c.reviews), userReviews) 
+      : 100; // assume strong competition if no data
+
+    // Review Gap Penalty
+    let reviewGapPenalty = 0;
+    if (!hasGBP) {
+      reviewGapPenalty = 0.47; // No GBP = invisible to 47%
+    } else if (userReviews < 20) {
+      reviewGapPenalty = 0.47;
+    } else {
+      const gapPercent = (topCompetitorReviews - userReviews) / topCompetitorReviews;
+      if (gapPercent >= 0.5) reviewGapPenalty = 0.40;
+      else if (gapPercent >= 0.25) reviewGapPenalty = 0.25;
+      else if (gapPercent > 0) reviewGapPenalty = 0.10;
+    }
+
+    // Recency Penalty
+    let recencyPenalty = 0;
+    if (recentDays >= 90) recencyPenalty = 0.35;
+    else if (recentDays >= 30) recencyPenalty = 0.20;
+    else if (recentDays >= 14) recencyPenalty = 0.05;
+
+    const combinedPenalty = Math.min(0.75, reviewGapPenalty + recencyPenalty);
+
+    const monthlyLeadEstimates = {
+      plumbing: 35, roofing: 15, gutters: 20, hvac: 25, electrical: 25,
+      landscaping: 20, pest_control: 30, pressure_washing: 15, window_cleaning: 15,
+      solar: 12, painter: 18, kitchen_remodel: 10, bathroom_remodel: 12,
+      general_contractor: 8, flooring: 15, drywall: 20, tile: 15,
+      real_estate: 8, mortgage: 10, property_mgmt: 12,
+      adu_designer: 8, adu_permit: 10,
+    };
+    const baseLeads = monthlyLeadEstimates[businessType] || 20;
+    const lostLeadsLow = Math.round(baseLeads * combinedPenalty * 0.7);
+    const lostLeadsHigh = Math.round(baseLeads * combinedPenalty * 1.0);
+    const avgLostLeads = Math.round((lostLeadsLow + lostLeadsHigh) / 2);
+
+    setResults({
+      business: { 
+        name: businessName, 
+        reviews: userReviews, 
+        rating: userRating, 
+        mostRecentDays: recentDays 
+      },
+      competitors,
+      analysis: { hasGMB: hasGBP, appearsInSearch: false },
+      jobValue: parseFloat(jobValue),
+      monthlyLoss: avgLostLeads * parseFloat(jobValue),
+      monthlyLossLow: lostLeadsLow * parseFloat(jobValue),
+      monthlyLossHigh: lostLeadsHigh * parseFloat(jobValue),
+      lostLeadsLow,
+      lostLeadsHigh,
+      visibilityLoss: Math.round(combinedPenalty * 100),
+      reviewGapPenalty: Math.round(reviewGapPenalty * 100),
+      recencyPenalty: Math.round(recencyPenalty * 100),
+      baseLeads,
+      businessType,
+      messages: INDUSTRY_MESSAGES[businessType],
+      searchPhrase: searchPhrase || null,
+      noGBP: !hasGBP,
+    });
+    setManualMode(false);
+  };
+
   const handleCopyReferral = () => {
     navigator.clipboard.writeText(window.location.href + '?ref=friend');
     setCopied(true);
@@ -302,7 +383,93 @@ export default function FiveStarCalculator() {
     setSubmitted(false); setResults(null); setBusinessName('');
     setCity(''); setJobValue(''); setBusinessType(''); setPhoneNumber('');
     setError(''); setConfirming(false); setConfirmData(null); setSearchPhrase('');
+    setManualMode(false); setManualReviews(''); setManualRating(''); setManualDaysSinceReview('');
   };
+
+  if (manualMode) {
+    return (
+      <div style={{ fontFamily: 'Poppins, sans-serif' }} className="min-h-screen bg-black flex items-center justify-center p-4 py-8">
+        <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full">
+          <div className="mb-6">
+            <p className="text-gray-500 text-sm mb-2">Heads up</p>
+            <h2 className="text-xl font-bold text-black mb-3">We couldn't pull your details automatically</h2>
+            <p className="text-gray-600 text-sm leading-relaxed">Google's database has some quirks and doesn't return every business through their API — even ones that show up in regular search. Tell us a little about your business and we'll still show you the gap.</p>
+          </div>
+
+          <div className="bg-gray-50 rounded-xl p-5 mb-4">
+            <h3 className="font-bold text-black mb-3">Do you have a Google Business Profile?</h3>
+            <p className="text-gray-600 text-xs mb-4">This is your free Google listing that shows your reviews, hours, and location when someone searches for you.</p>
+            <button
+              onClick={() => analyzeManual(true)}
+              className="w-full bg-black text-white py-3 rounded-lg font-semibold mb-3 hover:bg-gray-900"
+            >
+              Yes — let me enter my details
+            </button>
+            <button
+              onClick={() => analyzeManual(false)}
+              className="w-full border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:border-black text-sm"
+            >
+              I don't have a Google Business Profile
+            </button>
+          </div>
+
+          {/* Manual entry form */}
+          <div className="border-t pt-4 mt-4">
+            <p className="text-gray-500 text-xs uppercase tracking-widest font-semibold mb-3">Or enter your details</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-semibold text-black mb-1">Total Google Reviews</label>
+                <input
+                  type="number"
+                  value={manualReviews}
+                  onChange={(e) => setManualReviews(e.target.value)}
+                  placeholder="e.g., 24"
+                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg bg-white text-black"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-black mb-1">Star Rating</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  max="5"
+                  value={manualRating}
+                  onChange={(e) => setManualRating(e.target.value)}
+                  placeholder="e.g., 4.7"
+                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg bg-white text-black"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-black mb-1">Days Since Last Review</label>
+                <input
+                  type="number"
+                  value={manualDaysSinceReview}
+                  onChange={(e) => setManualDaysSinceReview(e.target.value)}
+                  placeholder="e.g., 45"
+                  className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg bg-white text-black"
+                />
+                <p className="text-xs text-gray-500 mt-1">Check your Google profile for the most recent review date</p>
+              </div>
+            </div>
+            <button
+              onClick={() => analyzeManual(true)}
+              disabled={!manualReviews}
+              className="w-full bg-black text-white py-3 rounded-lg font-bold mt-4 hover:bg-gray-900 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              Show My Results
+            </button>
+          </div>
+
+          <button
+            onClick={() => setManualMode(false)}
+            className="w-full text-gray-500 text-sm mt-4 hover:text-black"
+          >
+            ← Try a different search
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (confirming && confirmData) {
     return (
@@ -451,7 +618,7 @@ export default function FiveStarCalculator() {
                   <div key={i}>
                     <div className="flex justify-between items-center mb-1">
                       <span className="font-semibold text-black text-sm">{c.name}</span>
-                      <span className="text-xs text-gray-600">{c.reviews} reviews · {c.mostRecentDays}d ago</span>
+                      <span className="text-xs text-gray-600">{c.reviews} reviews{c.mostRecentDays !== null && c.mostRecentDays !== undefined ? ` · ${c.mostRecentDays}d ago` : ''}</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-3"><div className="bg-gray-400 h-3 rounded-full" style={{ width: `${(c.reviews / maxReviews) * 100}%` }}></div></div>
                   </div>

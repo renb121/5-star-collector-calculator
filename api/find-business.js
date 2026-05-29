@@ -33,6 +33,56 @@ export default async function handler(req, res) {
     return data.places && data.places.length > 0 ? data.places : null;
   }
 
+  function getDaysSinceLastReview(place) {
+    if (!place.reviews || place.reviews.length === 0) return null;
+    const mostRecent = place.reviews.reduce((latest, review) => {
+      const reviewDate = new Date(review.publishTime);
+      return !latest || reviewDate > latest ? reviewDate : latest;
+    }, null);
+    return mostRecent ? Math.floor((Date.now() - mostRecent.getTime()) / (1000 * 60 * 60 * 24)) : null;
+  }
+
+  // Always fetch competitors regardless of whether we find the user's business
+  const businessTypeQueries = {
+    plumbing: 'plumber',
+    roofing: 'roofing contractor',
+    gutters: 'gutter installation',
+    hvac: 'HVAC contractor',
+    electrical: 'electrician',
+    landscaping: 'landscaper',
+    pest_control: 'pest control',
+    pressure_washing: 'pressure washing',
+    window_cleaning: 'window cleaning',
+    solar: 'solar installer',
+    painter: 'painter',
+    kitchen_remodel: 'kitchen remodeling',
+    bathroom_remodel: 'bathroom remodeling',
+    general_contractor: 'general contractor',
+    flooring: 'flooring contractor',
+    drywall: 'drywall contractor',
+    tile: 'tile installer',
+    real_estate: 'real estate agent',
+    mortgage: 'mortgage broker',
+    property_mgmt: 'property management',
+    adu_designer: 'ADU designer',
+    adu_permit: 'permit expediter',
+  };
+
+  async function getCompetitors(excludeBusinessId = null) {
+    const query = `${businessTypeQueries[businessType] || businessType} ${city}`;
+    const results = await searchPlaces(query, 5);
+    if (!results) return [];
+    return results
+      .filter(p => !excludeBusinessId || p.id !== excludeBusinessId)
+      .slice(0, 3)
+      .map(p => ({
+        name: p.displayName?.text || 'Unknown',
+        reviews: p.userRatingCount || 0,
+        rating: p.rating || 0,
+        mostRecentDays: getDaysSinceLastReview(p)
+      }));
+  }
+
   try {
     const cleanName = businessName
       .replace(/\b(LLC|Inc|Corp|Co|Company|Ltd)\b\.?/gi, '')
@@ -60,11 +110,15 @@ export default async function handler(req, res) {
       }
     }
 
+    // Always get competitors
+    const competitors = await getCompetitors(business?.id);
+
     if (!business) {
-      return res.status(404).json({ 
+      // Return found: false but still include competitors so frontend can show manual entry
+      return res.status(200).json({ 
         found: false,
-        error: 'Business not found',
-        message: 'We could not find that business on Google. Try a more specific name or include the full address.'
+        message: 'Business not found in Google database',
+        competitors
       });
     }
 
@@ -77,46 +131,6 @@ export default async function handler(req, res) {
       if (mostRecent) {
         mostRecentDays = Math.floor((Date.now() - mostRecent.getTime()) / (1000 * 60 * 60 * 24));
       }
-    }
-
-    const businessTypeQueries = {
-      plumbing: 'plumber',
-      roofing: 'roofing contractor',
-      gutters: 'gutter installation',
-      hvac: 'HVAC contractor',
-      electrical: 'electrician',
-      landscaping: 'landscaper',
-      pest_control: 'pest control',
-      pressure_washing: 'pressure washing',
-      window_cleaning: 'window cleaning',
-      solar: 'solar installer',
-      painter: 'painter',
-      kitchen_remodel: 'kitchen remodeling',
-      bathroom_remodel: 'bathroom remodeling',
-      general_contractor: 'general contractor',
-      flooring: 'flooring contractor',
-      drywall: 'drywall contractor',
-      tile: 'tile installer',
-      real_estate: 'real estate agent',
-      mortgage: 'mortgage broker',
-      property_mgmt: 'property management',
-      adu_designer: 'ADU designer',
-      adu_permit: 'permit expediter',
-    };
-
-    const competitorQuery = `${businessTypeQueries[businessType] || businessType} ${city}`;
-    const competitorResults = await searchPlaces(competitorQuery, 5);
-    
-    let competitors = [];
-    if (competitorResults) {
-      competitors = competitorResults
-        .filter(p => p.id !== business.id)
-        .slice(0, 3)
-        .map(p => ({
-          name: p.displayName?.text || 'Unknown',
-          reviews: p.userRatingCount || 0,
-          rating: p.rating || 0
-        }));
     }
 
     return res.status(200).json({

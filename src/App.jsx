@@ -180,39 +180,21 @@ export default function FiveStarCalculator() {
     setLoading(true);
     setError('');
     try {
-      const prompt = `Search Google for this business and return its basic profile:
-
-Business Name: ${businessName}
-Location: ${city}
-
-Find the most likely match and return ONLY this JSON:
-{
-  "name": "exact business name as it appears on Google",
-  "address": "full street address",
-  "phone": "phone number or empty string",
-  "reviews": 0,
-  "rating": 0.0,
-  "found": true
-}
-
-If you cannot find the business return: { "found": false }`;
-
-      const response = await fetch('/api/analyze', {
+      const response = await fetch('/api/find-business', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, maxTokens: 500 })
+        body: JSON.stringify({ businessName, city, businessType })
       });
 
-      if (!response.ok) throw new Error('API request failed');
       const data = await response.json();
-      const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('Could not parse response');
-      const found = JSON.parse(jsonMatch[0]);
-      if (!found.found) {
-        setError("We couldn't find that business. Try adding your city and state (e.g. Newark, CA).");
+
+      if (!response.ok || !data.found) {
+        setError(data.message || "We couldn't find that business. Try adding your city and state (e.g. Newark, CA).");
         return;
       }
-      setConfirmData(found);
+
+      // Store both business and competitors for the analysis step
+      setConfirmData({ ...data.business, competitors: data.competitors });
       setConfirming(true);
     } catch (err) {
       setError('Unable to search. Please try again.');
@@ -226,48 +208,25 @@ If you cannot find the business return: { "found": false }`;
     setError('');
     const selectedType = BUSINESS_TYPES.find(b => b.value === businessType);
     try {
-      const searchContext = searchPhrase
-        ? `Search Google for "${searchPhrase}" and find the top 2-3 businesses that appear in results. These are the competitors.`
-        : `Find 2-3 top competitor ${selectedType?.label} businesses in ${city}.`;
-
-      const prompt = `You are a local business analyst. Using this confirmed business, find competitor data:
-
-Business: ${confirmData.name}
-Address: ${confirmData.address}
-Business Type: ${selectedType?.label}
-Location: ${city}
-Google Reviews: ${confirmData.reviews}
-Rating: ${confirmData.rating}
-${searchPhrase ? `Customer Search Phrase: "${searchPhrase}"` : ''}
-
-${searchContext}
-
-For each competitor find their review count and most recent review date.
-${searchPhrase ? `Also note whether "${confirmData.name}" appears in the search results for "${searchPhrase}".` : ''}
-
-Return ONLY this JSON:
-{
-  "business": { "name": "${confirmData.name}", "reviews": ${confirmData.reviews}, "rating": ${confirmData.rating}, "mostRecentDays": 0 },
-  "competitors": [{ "name": "string", "reviews": 0, "mostRecentDays": 0 }],
-  "analysis": { "reviewGap": 0, "recencyGap": 0, "estimatedLostJobs": 0, "hasGMB": ${confirmData.reviews > 0}, "appearsInSearch": false },
-  "searchPhrase": "${searchPhrase || ''}"
-}`;
-
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, maxTokens: 1000 })
-      });
-
-      if (!response.ok) throw new Error('API request failed');
-      const data = await response.json();
-      const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('Could not parse response');
-      const analysisData = JSON.parse(jsonMatch[0]);
+      // We already have all the data from Google Places - no need for another API call
+      const analysisData = {
+        business: { 
+          name: confirmData.name, 
+          reviews: confirmData.reviews, 
+          rating: confirmData.rating, 
+          mostRecentDays: confirmData.mostRecentDays || 0 
+        },
+        competitors: confirmData.competitors || [],
+        analysis: { 
+          hasGMB: confirmData.reviews > 0, 
+          appearsInSearch: false 
+        },
+        searchPhrase: searchPhrase || ''
+      };
 
       // GROUNDED FORMULA — Based on BrightLocal 2026 Local Consumer Review Survey
       const userReviews = confirmData.reviews || 0;
-      const topCompetitorReviews = Math.max(...analysisData.competitors.map(c => c.reviews), userReviews);
+      const topCompetitorReviews = Math.max(...(analysisData.competitors.map(c => c.reviews) || [0]), userReviews);
       const recentDays = analysisData.business.mostRecentDays || 0;
 
       // Step 1: Review Gap Penalty

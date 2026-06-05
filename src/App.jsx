@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertCircle, TrendingUp, Phone, Loader, ChevronDown, Share2 } from 'lucide-react';
 
 const BUSINESS_TYPES = [
@@ -169,6 +169,9 @@ export default function FiveStarCalculator() {
   const [manualReviews, setManualReviews] = useState('');
   const [manualRating, setManualRating] = useState('');
   const [manualDaysSinceReview, setManualDaysSinceReview] = useState('');
+  const [referralPhone, setReferralPhone] = useState('');
+  const [referralUnlocked, setReferralUnlocked] = useState(false);
+  const [referredBy, setReferredBy] = useState('');
 
   const handleBusinessTypeChange = (value) => {
     setBusinessType(value);
@@ -368,8 +371,26 @@ export default function FiveStarCalculator() {
     setManualMode(false);
   };
 
+  // Capture referral code from URL on page load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref');
+    if (ref) setReferredBy(ref);
+  }, []);
+
+  const handleUnlockReferral = () => {
+    if (!referralPhone || referralPhone.replace(/\D/g, '').length < 10) {
+      setError('Please enter a valid phone number');
+      return;
+    }
+    setError('');
+    setReferralUnlocked(true);
+  };
+
   const handleCopyReferral = () => {
-    navigator.clipboard.writeText(window.location.href + '?ref=friend');
+    const cleanPhone = referralPhone.replace(/\D/g, '');
+    const baseUrl = window.location.origin + window.location.pathname;
+    navigator.clipboard.writeText(`${baseUrl}?ref=${cleanPhone}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -384,6 +405,7 @@ export default function FiveStarCalculator() {
     setCity(''); setJobValue(''); setBusinessType(''); setPhoneNumber('');
     setError(''); setConfirming(false); setConfirmData(null); setSearchPhrase('');
     setManualMode(false); setManualReviews(''); setManualRating(''); setManualDaysSinceReview('');
+    setReferralPhone(''); setReferralUnlocked(false);
   };
 
   if (manualMode) {
@@ -526,7 +548,11 @@ export default function FiveStarCalculator() {
               <h3 className="font-bold text-black">Know another business owner?</h3>
             </div>
             <p className="text-gray-600 text-sm mb-4">Send them this link. You get <span className="font-semibold text-black">$40 cash</span> when they sign up.</p>
-            <button onClick={handleCopyReferral} className="w-full bg-black text-white py-3 rounded-lg font-semibold text-sm hover:bg-gray-900 transition-colors">
+            <div className="bg-white rounded-lg p-3 mb-3">
+              <p className="text-xs text-gray-500 mb-1">Your unique referral link:</p>
+              <p className="text-sm font-mono text-black break-all">{window.location.origin + window.location.pathname}?ref={phoneNumber.replace(/\D/g, '')}</p>
+            </div>
+            <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin + window.location.pathname}?ref=${phoneNumber.replace(/\D/g, '')}`); setCopied(true); setTimeout(() => setCopied(false), 2000); }} className="w-full bg-black text-white py-3 rounded-lg font-semibold text-sm hover:bg-gray-900 transition-colors">
               {copied ? '✓ Copied!' : 'Copy My Referral Link'}
             </button>
           </div>
@@ -718,9 +744,38 @@ export default function FiveStarCalculator() {
           <div className="bg-white rounded-xl shadow-2xl p-6">
             <div className="flex items-center gap-2 mb-2"><Share2 size={18} className="text-black" /><h3 className="font-bold text-black">Know another business owner?</h3></div>
             <p className="text-gray-600 text-sm mb-4">Send them this tool. You get <span className="font-semibold text-black">$40 cash</span> when they sign up.</p>
-            <button onClick={handleCopyReferral} className="w-full border-2 border-black text-black py-3 rounded-lg font-semibold hover:bg-black hover:text-white transition-colors text-sm">
-              {copied ? '✓ Link Copied!' : 'Copy My Referral Link'}
-            </button>
+            {!referralUnlocked ? (
+              <>
+                <p className="text-gray-600 text-xs mb-3">Drop your number to get your unique referral link — that is how we know to send your $40.</p>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="tel"
+                    placeholder="(555) 123-4567"
+                    value={referralPhone}
+                    onChange={(e) => setReferralPhone(e.target.value)}
+                    className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-black bg-white text-black placeholder-gray-400"
+                  />
+                  <button
+                    onClick={handleUnlockReferral}
+                    className="bg-black text-white px-5 py-3 rounded-lg font-semibold hover:bg-gray-900 whitespace-nowrap"
+                  >
+                    Get My Link
+                  </button>
+                </div>
+                {error && <p className="text-red-600 text-sm mt-2">{error}</p>}
+              </>
+            ) : (
+              <>
+                <div className="bg-gray-50 rounded-lg p-3 mb-3">
+                  <p className="text-xs text-gray-500 mb-1">Your unique referral link:</p>
+                  <p className="text-sm font-mono text-black break-all">{window.location.origin + window.location.pathname}?ref={referralPhone.replace(/\D/g, '')}</p>
+                </div>
+                <button onClick={handleCopyReferral} className="w-full border-2 border-black text-black py-3 rounded-lg font-semibold hover:bg-black hover:text-white transition-colors text-sm">
+                  {copied ? '✓ Link Copied!' : 'Copy My Referral Link'}
+                </button>
+              </>
+            )}
+          </div>
           </div>
         </div>
       </div>
